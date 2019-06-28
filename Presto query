@@ -1,0 +1,48 @@
+with trips as (
+SELECT *,
+  case when dns_type IN ('Risk Managed DNS', 'Cash Cancelled DNS') THEN 'Arrear' else 'Not Arrear' END as ArrearStatus
+FROM fraud.pmt_risk_cohort_fact a
+  join (select *
+        from dwh.fact_eats_trip
+        where date(datestr) BETWEEN date('{{start_date}}') and date('{{end_date}}')
+     
+        ) fet on a.trip_uuid = fet.order_trip_uuid
+where Lower(country_name) like '%india%'
+  AND marketplace IN ('agora', 'eats', 'Eats', 'quasi_eats')
+  and from_iso8601_date(a.datestr) BETWEEN date('{{start_date}}') and date('{{end_date}}')
+order by 1 ASC ),
+  
+orders as (select distinct t.*, a.city_name,a.restaurant_uuid,a.order_trip_uuid,a.eater_trip_rank,a.client_uuid,a.card_type,a.eater_request_timestamp_local,
+                                a.token_type,eater_uuid,signup_role,is_polymorphed,is_rider,a.country_id,mobile_country_id,has_confirmed_mobile,
+                                banned,a.language_code,eats_rating,signup_timestamp,signup_city_id,signup_form,signup_app_version,
+                                eater_promotion_code,is_referral,first_eats_login_timestamp,first_eats_activity_timestamp,primary_city_id,
+                                a.is_settled
+            from trips t 
+            join (select dc.city_name as city_name,restaurant_uuid,order_trip_uuid,eater_trip_rank,client_uuid,card_type,eater_request_timestamp_local,
+                                token_type,eater_uuid,signup_role,is_polymorphed,is_rider,dc.country_id,mobile_country_id,has_confirmed_mobile,
+                                banned,de.language_code,eats_rating,signup_timestamp,signup_city_id,signup_form,signup_app_version,
+                                eater_promotion_code,is_referral,first_eats_login_timestamp,first_eats_activity_timestamp,primary_city_id,
+                                CASE WHEN ftb.is_settled IS NULL THEN FALSE ELSE ftb.is_settled END AS is_settled
+    
+                    FROM dwh.fact_eats_trip AS fet
+                      INNER JOIN dwh.dim_eater AS de ON fet.client_uuid = de.eater_uuid
+                      INNER JOIN dwh.dim_city AS dc ON fet.city_id = dc.city_id
+                      LEFT JOIN raw_etl_data.payment_profile AS pp ON pp.random_uuid = fet.eater_payment_profile_uuid
+                      LEFT JOIN (SELECT trip_uuid, -1 * amount_local AS amount_local,-1 * amount_usd AS amount_usd,
+                                            MAX(CASE WHEN state = 'SETTLED' THEN TRUE ELSE FALSE END) AS is_settled
+                                 FROM dwh.fact_trip_bill AS fact_trip_bill
+                                 WHERE bill_type = 'SALE'
+                                 
+                                 AND CAST(datestr AS TIMESTAMP) BETWEEN TIMESTAMP '{{start_date}}' AND TIMESTAMP '{{end_date}}'  
+                                 GROUP BY 1,2,3) ftb ON ftb.trip_uuid = fet.order_trip_uuid
+                    where date(fet.datestr) BETWEEN date('{{start_date}}') and date('{{end_date}}')
+                          ) a on a.order_trip_uuid = t.order_trip_uuid
+                          )
+  
+select distinct *
+from orders
+where ArrearStatus = 'Not Arrear'
+
+
+
+
